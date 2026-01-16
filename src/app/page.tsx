@@ -1,4 +1,5 @@
-import { SymptomCheckerChat } from "@/components/symptom-checker-chat"
+import { SymptomCheckerChat } from "@/app/components/symptom-checker-chat"
+
 
 export default function Home() {
   return (
