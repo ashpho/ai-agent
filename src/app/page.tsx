@@ -1,8 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { SymptomCheckerChat } from "@/app/components/symptom-checker-chat";
-import { MedCheckChat } from "@/app/components/med-check-chat";
+import { SymptomCheckerChat } from "./components/symptom-checker-chat";
+import { MedCheckChat } from "./components/med-check-chat";
 
 export default function Home() {
   const [mode, setMode] = React.useState<"symptoms" | "meds">("symptoms");
@@ -23,3 +23,25 @@ export default function Home() {
               mode === "symptoms" ? "bg-black text-white" : "bg-white"
             }`}
           >
+            Symptom Check
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMode("meds")}
+            className={`rounded-md px-3 py-2 text-sm border ${
+              mode === "meds" ? "bg-black text-white" : "bg-white"
+            }`}
+          >
+            GDMT Med Check
+          </button>
+        </div>
+
+        <div className="mt-6">
+          {mode === "symptoms" ? <SymptomCheckerChat /> : <MedCheckChat />}
+        </div>
+      </div>
+    </main>
+  );
+}
+
