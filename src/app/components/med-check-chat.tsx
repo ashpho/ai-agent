@@ -29,6 +29,7 @@ export default function MedCheckChat() {
     if (!trimmed || loading) return;
 
     const userMessage: Message = { role: "user", content: trimmed };
+
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setLoading(true);
