@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { SymptomCheckerChat } from "./components/symptom-checker-chat";
-import { MedCheckChat } from "./components/med-check-chat";
+import MedCheckChat from "./components/med-check-chat";
 
 export default function Home() {
   const [mode, setMode] = React.useState<"symptoms" | "meds">("symptoms");
