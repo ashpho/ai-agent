@@ -33,7 +33,7 @@ export default function MedCheckChat() {
     setInput("");
     setLoading(true);
 
-    // 🟡 STEP 1: Capture name
+    // Step 1: capture name once
     if (!patientName) {
       const name = trimmed.split(" ")[0];
       setPatientName(name);
@@ -42,12 +42,12 @@ export default function MedCheckChat() {
         ...prev,
         {
           role: "assistant",
-          content: `Thanks, ${name}. I’m going to walk through a quick Day 8 post-titration medication check with you. I’ll confirm each medication on your plan and note any discrepancies.`,
+          content: `Thanks, ${name}. I’m going to do a quick Day 8 post-titration medication check. I’ll confirm each medication on your plan and note any discrepancies.`,
         },
         {
           role: "assistant",
           content:
-            "Let’s start with your ARB.\n\nAre you currently taking **losartan (Cozaar)** as prescribed? If yes, what time of day do you usually take it, and did you miss any doses in the past 7 days?",
+            "Let’s start with your ARB.\n\nAre you taking **losartan (Cozaar)** as prescribed? If yes, what time of day do you usually take it, and did you miss any doses in the past 7 days?",
         },
       ]);
 
@@ -55,7 +55,7 @@ export default function MedCheckChat() {
       return;
     }
 
-    // 🟢 STEP 2: Normal chat flow (OpenAI)
+    // Step 2: normal LLM flow
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -73,7 +73,7 @@ export default function MedCheckChat() {
         ...prev,
         {
           role: "assistant",
-          content: data.reply ?? "Sorry — something went wrong. Please try again.",
+          content: data.reply ?? "Sorry — I didn’t get a response. Please try again.",
         },
       ]);
     } catch {
@@ -81,7 +81,7 @@ export default function MedCheckChat() {
         ...prev,
         {
           role: "assistant",
-          content: "Sorry — I ran into an issue. Please try again.",
+          content: "Sorry — something went wrong. Please try again.",
         },
       ]);
     } finally {
@@ -91,9 +91,7 @@ export default function MedCheckChat() {
 
   return (
     <div className="mx-auto max-w-3xl p-4">
-      {showBanner && (
-        <AlertBanner onDismiss={() => setShowBanner(false)} />
-      )}
+      {showBanner && <AlertBanner onDismiss={() => setShowBanner(false)} />}
 
       <div className="mt-4 rounded-xl border bg-background">
         <ChatHeader
