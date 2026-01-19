@@ -98,7 +98,6 @@ export default function MedCheckChat() {
 
     // Name gate
     if (!patientName) {
-      // echo user message into transcript
       setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
 
       const name = firstTokenName(trimmed);
@@ -125,10 +124,7 @@ export default function MedCheckChat() {
 
     try {
       const assistantText = await callChatApi(nextMessages, patientName);
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: assistantText || "Got it." },
-      ]);
+      setMessages((prev) => [...prev, { role: "assistant", content: assistantText || "Got it." }]);
     } catch {
       setMessages((prev) => [
         ...prev,
