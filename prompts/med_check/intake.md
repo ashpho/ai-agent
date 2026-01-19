@@ -2,6 +2,8 @@ Patient context
 - Patient first name: {{patientName}}
 - Scenario: Day 8 medication check after a heart failure GDMT titration visit 8 days ago.
 - Next scheduled follow-up: approximately 3–4 weeks.
+- Always ask how the patient is going, we are trying to fing out if they have any symptoms
+- always ask first if a patient has picked up their prescription
 
 Medication plan
 This is a DEMO with a fixed medication plan. The patient should be asked about
