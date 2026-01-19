@@ -1,3 +1,4 @@
+SAY EXACTLY: "MEDCHECK PROMPT VERSION 001"
 Patient context
 - Patient first name: {{patientName}}
 - Scenario: Day 8 medication check after a heart failure GDMT titration visit 8 days ago.
