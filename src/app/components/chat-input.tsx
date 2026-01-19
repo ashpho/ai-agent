@@ -1,38 +1,45 @@
 "use client";
 
+import React, { useState } from "react";
+
 type Props = {
-  value: string;
-  onChange: (v: string) => void;
-  onSend: () => void;
-  loading?: boolean;
+  onSend: (message: string) => void | Promise<void>;
+  disabled?: boolean;
   placeholder?: string;
 };
 
-export function ChatInput({
-  value,
-  onChange,
+export default function ChatInput({
   onSend,
-  loading = false,
-  placeholder,
+  disabled = false,
+  placeholder = "Type your message…",
 }: Props) {
+  const [value, setValue] = useState("");
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = value.trim();
+    if (!trimmed || disabled) return;
+
+    setValue("");
+    await onSend(trimmed);
+  }
+
   return (
-    <div className="mt-4 flex gap-2">
+    <form onSubmit={handleSubmit} className="flex gap-2">
       <input
-        className="flex-1 rounded-md border px-3 py-2 text-sm"
+        className="flex-1 rounded-xl border px-3 py-2 text-sm outline-none"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => setValue(e.target.value)}
         placeholder={placeholder}
-        disabled={loading}
+        disabled={disabled}
       />
       <button
-        onClick={onSend}
-        disabled={loading}
-        className="rounded-md border px-3 py-2 text-sm"
+        type="submit"
+        className="rounded-xl bg-black px-4 py-2 text-sm text-white disabled:opacity-50"
+        disabled={disabled || !value.trim()}
       >
         Send
       </button>
-    </div>
+    </form>
   );
 }
-
-export default ChatInput;
