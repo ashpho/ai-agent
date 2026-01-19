@@ -31,7 +31,10 @@ export default function MedCheckChat() {
     if (saved) {
       setPatientName(saved);
       setMessages([
-        { role: "assistant", content: `Welcome back, ${saved}. Ready to continue your medication check?` },
+        {
+          role: "assistant",
+          content: `Welcome back, ${saved}. Ready to continue your medication check?`,
+        },
       ]);
     } else {
       setMessages([{ role: "assistant", content: "Hi — what’s your first name?" }]);
@@ -54,7 +57,7 @@ export default function MedCheckChat() {
     if (!res.ok) throw new Error(`API error: ${res.status}`);
     const data = await res.json();
 
-    // IMPORTANT: your API returns { reply: "..." }
+    // API returns { reply: string }
     const assistantText: string = data?.reply ?? "";
     return assistantText;
   }
@@ -62,7 +65,6 @@ export default function MedCheckChat() {
   async function startFromPrompt(name: string) {
     setLoading(true);
     try {
-      // Kickoff instruction (user message) to start the interview.
       const kickoff: Message = {
         role: "user",
         content:
@@ -72,7 +74,10 @@ export default function MedCheckChat() {
       const assistantText = await callChatApi([kickoff], name);
 
       setMessages([
-        { role: "assistant", content: assistantText || "Let’s get started." },
+        {
+          role: "assistant",
+          content: assistantText || "Let’s get started.",
+        },
       ]);
     } catch {
       setMessages([
@@ -91,19 +96,16 @@ export default function MedCheckChat() {
     const trimmed = (userMsg || "").trim();
     if (!trimmed) return;
 
-    // 1) Name gate
+    // Name gate
     if (!patientName) {
-      const name = firstTokenName(trimmed);
-
+      // echo user message into transcript
       setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
 
+      const name = firstTokenName(trimmed);
       if (!name) {
         setMessages((prev) => [
           ...prev,
-          {
-            role: "assistant",
-            content: "Sorry — I didn’t catch that. What’s your first name?",
-          },
+          { role: "assistant", content: "Sorry — I didn’t catch that. What’s your first name?" },
         ]);
         return;
       }
@@ -115,15 +117,14 @@ export default function MedCheckChat() {
       return;
     }
 
-    // 2) Normal flow
-    const nextMessages = [...messages, { role: "user", content: trimmed }];
+    // Normal flow
+    const nextMessages: Message[] = [...messages, { role: "user", content: trimmed }];
 
     setLoading(true);
     setMessages(nextMessages);
 
     try {
       const assistantText = await callChatApi(nextMessages, patientName);
-
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: assistantText || "Got it." },
@@ -131,10 +132,7 @@ export default function MedCheckChat() {
     } catch {
       setMessages((prev) => [
         ...prev,
-        {
-          role: "assistant",
-          content: "I’m having trouble right now. Please try again in a moment.",
-        },
+        { role: "assistant", content: "I’m having trouble right now. Please try again in a moment." },
       ]);
     } finally {
       setLoading(false);
@@ -150,9 +148,7 @@ export default function MedCheckChat() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b px-4 py-3">
-        <div className="text-sm">
-          {patientName ? `Med Check – ${patientName}` : "Med Check"}
-        </div>
+        <div className="text-sm">{patientName ? `Med Check – ${patientName}` : "Med Check"}</div>
         <button
           type="button"
           onClick={onReset}
