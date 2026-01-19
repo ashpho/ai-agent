@@ -16,6 +16,7 @@ function readPromptFile(mode: Mode, filename: string) {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
+
     const {
       messages,
       mode,
@@ -26,7 +27,8 @@ export async function POST(req: Request) {
       patientName?: string;
     };
 
-    const resolvedMode: Mode = mode === "med_check" ? "med_check" : "hf_symptom_check";
+    const resolvedMode: Mode =
+      mode === "med_check" ? "med_check" : "hf_symptom_check";
 
     const system = readPromptFile(resolvedMode, "system.md");
     const intake = readPromptFile(resolvedMode, "intake.md");
@@ -39,17 +41,21 @@ export async function POST(req: Request) {
 
     const response = await client.chat.completions.create({
       model: "gpt-4.1-mini",
-      messages: [{ role: "system", content: promptHeader }, ...messages],
+      messages: [{ role: "system", content: promptHeader }, ...(messages ?? [])],
+      temperature: 0.2,
     });
 
     return new Response(
       JSON.stringify({
-        reply: response.choices[0].message.content,
+        reply: response.choices?.[0]?.message?.content ?? "",
       }),
-      { status: 200 }
+      { status: 200, headers: { "Content-Type": "application/json" } }
     );
   } catch (error) {
     console.error(error);
-    return new Response(JSON.stringify({ error: "Something went wrong" }), { status: 500 });
+    return new Response(
+      JSON.stringify({ error: "Something went wrong" }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
   }
 }

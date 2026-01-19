@@ -16,7 +16,6 @@ const NAME_KEY = "medcheck_patient_name";
 function firstTokenName(input: string) {
   const cleaned = (input || "").trim();
   if (!cleaned) return "";
-  // take first token, strip punctuation
   return cleaned.split(/\s+/)[0].replace(/[^\p{L}\p{N}'-]/gu, "");
 }
 
@@ -25,70 +24,57 @@ export default function MedCheckChat() {
   const [patientName, setPatientName] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
 
-  // On mount, try to restore name
   useEffect(() => {
     if (typeof window === "undefined") return;
+
     const saved = window.localStorage.getItem(NAME_KEY);
     if (saved) {
       setPatientName(saved);
-      // Kick off the conversation from the prompt once name exists
-      void startFromPrompt(saved);
-    } else {
-      // Ask for name first
       setMessages([
-        {
-          role: "assistant",
-          content: "Hi — what’s your first name?",
-        },
+        { role: "assistant", content: `Welcome back, ${saved}. Ready to continue your medication check?` },
       ]);
+    } else {
+      setMessages([{ role: "assistant", content: "Hi — what’s your first name?" }]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  async function callChatApi(nextMessages: Message[], name: string) {
+    const payload = {
+      mode: "med_check",
+      patientName: name,
+      messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
+    };
+
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    const data = await res.json();
+
+    // IMPORTANT: your API returns { reply: "..." }
+    const assistantText: string = data?.reply ?? "";
+    return assistantText;
+  }
+
   async function startFromPrompt(name: string) {
-    // Do NOT hardcode the med-check script here.
-    // We call the API and let prompts/med_check/* drive the opening + first question.
     setLoading(true);
     try {
-      const payload = {
-        mode: "med_check",
-        patientName: name,
-        // Hidden kickoff message (not shown in UI) so the model starts cleanly
-        messages: [
-          {
-            role: "user",
-            content: "Start the Day 8 medication check now.",
-          },
-        ] as Message[],
+      // Kickoff instruction (user message) to start the interview.
+      const kickoff: Message = {
+        role: "user",
+        content:
+          "Begin the medication check now. Follow the prompt’s rules and ask the first question.",
       };
 
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        throw new Error(`API error: ${res.status}`);
-      }
-
-      const data = await res.json();
-      const assistantText =
-        data?.message?.content ??
-        data?.message ??
-        data?.content ??
-        data?.text ??
-        "";
+      const assistantText = await callChatApi([kickoff], name);
 
       setMessages([
-        {
-          role: "assistant",
-          content:
-            assistantText ||
-            "Thanks. Let’s get started. (I couldn’t load the scripted prompt response.)",
-        },
+        { role: "assistant", content: assistantText || "Let’s get started." },
       ]);
-    } catch (e) {
+    } catch {
       setMessages([
         {
           role: "assistant",
@@ -105,13 +91,15 @@ export default function MedCheckChat() {
     const trimmed = (userMsg || "").trim();
     if (!trimmed) return;
 
-    // 1) Name gate: first user response becomes the name (no API call yet)
+    // 1) Name gate
     if (!patientName) {
       const name = firstTokenName(trimmed);
+
+      setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
+
       if (!name) {
         setMessages((prev) => [
           ...prev,
-          { role: "user", content: trimmed },
           {
             role: "assistant",
             content: "Sorry — I didn’t catch that. What’s your first name?",
@@ -123,58 +111,29 @@ export default function MedCheckChat() {
       if (typeof window !== "undefined") window.localStorage.setItem(NAME_KEY, name);
       setPatientName(name);
 
-      // Show the user’s name entry, then start the AI-driven med check from prompts
-      setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
-
       await startFromPrompt(name);
       return;
     }
 
-    // 2) Normal flow: call /api/chat with mode=med_check and existing message history
+    // 2) Normal flow
+    const nextMessages = [...messages, { role: "user", content: trimmed }];
+
     setLoading(true);
-    setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
+    setMessages(nextMessages);
 
     try {
-      const payload = {
-        mode: "med_check",
-        patientName,
-        // send full visible history
-        messages: [...messages, { role: "user", content: trimmed }].map((m) => ({
-          role: m.role,
-          content: m.content,
-        })),
-      };
-
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) throw new Error(`API error: ${res.status}`);
-
-      const data = await res.json();
-      const assistantText =
-        data?.message?.content ??
-        data?.message ??
-        data?.content ??
-        data?.text ??
-        "";
+      const assistantText = await callChatApi(nextMessages, patientName);
 
       setMessages((prev) => [
         ...prev,
-        {
-          role: "assistant",
-          content: assistantText || "Got it.",
-        },
+        { role: "assistant", content: assistantText || "Got it." },
       ]);
-    } catch (e) {
+    } catch {
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content:
-            "I’m having trouble right now. Please try again in a moment.",
+          content: "I’m having trouble right now. Please try again in a moment.",
         },
       ]);
     } finally {
@@ -205,9 +164,7 @@ export default function MedCheckChat() {
 
       <div className="flex-1 overflow-y-auto p-4">
         <MessageList messages={messages} />
-        {loading ? (
-          <div className="mt-3 text-sm opacity-70">Typing…</div>
-        ) : null}
+        {loading ? <div className="mt-3 text-sm opacity-70">Typing…</div> : null}
       </div>
 
       <div className="border-t p-3">
