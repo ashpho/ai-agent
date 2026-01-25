@@ -1,209 +1,205 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type Role = "user" | "assistant";
 type ChatMsg = { role: Role; content: string };
 
-const DEMO_PATIENT_NAME = "Ashley";
+type DeviceType =
+  | "Blood pressure cuff"
+  | "ECG patch / wearable monitor"
+  | "Scale"
+  | "Pulse oximeter";
 
-// Persisted scenario index so refreshes keep cycling
-const SCENARIO_IDX_KEY = "rs_poc_device_scenario_idx_v1";
-
-type DeviceScenario = {
-  id: string;
-  label: string;
-  postVerifyNudge: string; // what we want to do AFTER verification (kept generic)
-};
-
-const SCENARIOS: DeviceScenario[] = [
-  {
-    id: "bp_missing_48h",
-    label: "Blood pressure cuff",
-    postVerifyNudge:
-      "Thanks — once I confirm, I’ll help you do a quick blood pressure cuff check and make sure readings are syncing.",
-  },
-  {
-    id: "scale_missing_72h",
-    label: "Bluetooth weight scale",
-    postVerifyNudge:
-      "Thanks — once I confirm, I’ll help you do a quick scale connection check and make sure readings are syncing.",
-  },
-  {
-    id: "pulseox_no_data",
-    label: "Pulse oximeter",
-    postVerifyNudge:
-      "Thanks — once I confirm, I’ll help you do a quick pulse oximeter check and make sure readings are syncing.",
-  },
-  {
-    id: "ecg_patch_gap",
-    label: "ECG patch / wearable monitor",
-    postVerifyNudge:
-      "Thanks — once I confirm, I’ll help you do a quick wearable check to make sure it’s positioned and transmitting.",
-  },
-  {
-    id: "bp_outlier_reading",
-    label: "Blood pressure cuff (follow-up)",
-    postVerifyNudge:
-      "Thanks — once I confirm, I’ll help you do a quick cuff check and then we’ll make sure your next reading goes through.",
-  },
+const DEVICES: DeviceType[] = [
+  "Blood pressure cuff",
+  "ECG patch / wearable monitor",
+  "Scale",
+  "Pulse oximeter",
 ];
 
-function clampIdx(n: number, len: number) {
-  if (!len) return 0;
-  return ((n % len) + len) % len;
-}
+const DEMO_PATIENT_NAME = "Ashley";
 
-function initialVerificationMessage(patientName: string) {
-  return [
-    `Hi ${patientName} — this is a quick outreach from your cardiac monitoring team.`,
-    `Before we discuss your account, please reply with:`,
-    `1) Your full name`,
-    `2) Your date of birth (MM/DD/YYYY)`,
-  ].join("\n");
+const LS_DEVICE_IDX = "rs_poc_device_idx_v1";
+const LS_THREAD = "rs_poc_device_agent_thread_v2";
+
+function nextDeviceIndex(curr: number) {
+  return (curr + 1) % DEVICES.length;
 }
 
 export default function DeviceAgentChat() {
-  const [patientName] = useState<string>(DEMO_PATIENT_NAME);
-  const [scenarioIdx, setScenarioIdx] = useState<number>(0);
+  const [deviceIdx, setDeviceIdx] = useState<number>(0);
+  const deviceType = useMemo(() => DEVICES[deviceIdx], [deviceIdx]);
+
   const [messages, setMessages] = useState<ChatMsg[]>([]);
-  const [input, setInput] = useState<string>("");
-  const [loading, setLoading] = useState<boolean>(false);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  // prevent double kickoff in React StrictMode/dev
-  const didInitRef = useRef(false);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  const scenario = SCENARIOS[clampIdx(scenarioIdx, SCENARIOS.length)];
-
+  // Auto-scroll to bottom when messages update
   useEffect(() => {
-    if (didInitRef.current) return;
-    didInitRef.current = true;
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages, loading]);
 
-    const saved =
-      typeof window !== "undefined" ? localStorage.getItem(SCENARIO_IDX_KEY) : null;
-    const startIdx = saved
-      ? clampIdx(parseInt(saved, 10) || 0, SCENARIOS.length)
-      : 0;
+  // Initialize device + first message
+  useEffect(() => {
+    const savedIdxRaw =
+      typeof window !== "undefined" ? localStorage.getItem(LS_DEVICE_IDX) : null;
+    const savedIdx = savedIdxRaw ? Number(savedIdxRaw) : 0;
+    const safeIdx = Number.isFinite(savedIdx) ? savedIdx : 0;
+    setDeviceIdx(Math.min(Math.max(safeIdx, 0), DEVICES.length - 1));
 
-    setScenarioIdx(startIdx);
+    const savedThread =
+      typeof window !== "undefined" ? localStorage.getItem(LS_THREAD) : null;
 
-    const intro = initialVerificationMessage(patientName);
-    const nudge = SCENARIOS[startIdx].postVerifyNudge;
+    if (savedThread) {
+      try {
+        const parsed = JSON.parse(savedThread) as ChatMsg[];
+        if (Array.isArray(parsed) && parsed.length) {
+          setMessages(parsed);
+          return;
+        }
+      } catch {
+        // ignore
+      }
+    }
 
-    // We show verification request + a generic “what happens next” note (still non-PHI)
-    setMessages([
-      { role: "assistant", content: intro },
-      { role: "assistant", content: nudge },
-    ]);
-  }, [patientName]);
+    // Default: proactive alert-style opener (more urgent than “routine check”)
+    const opener = `Hi ${DEMO_PATIENT_NAME} — we noticed we have not received a recent transmission from your ${deviceType}. This is usually a quick fix (Bluetooth/app connectivity), and we’d like to get you back online today.\n\nBefore we discuss your account, please reply with:\n1) Your full name\n2) Your date of birth (MM/DD/YYYY)`;
 
-  function advanceScenario() {
-    const next = clampIdx(scenarioIdx + 1, SCENARIOS.length);
-    setScenarioIdx(next);
-    if (typeof window !== "undefined") localStorage.setItem(SCENARIO_IDX_KEY, String(next));
+    setMessages([{ role: "assistant", content: opener }]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    const intro = initialVerificationMessage(patientName);
-    const nudge = SCENARIOS[next].postVerifyNudge;
+  // Persist thread
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(LS_THREAD, JSON.stringify(messages));
+  }, [messages]);
 
-    setMessages([
-      { role: "assistant", content: intro },
-      { role: "assistant", content: nudge },
-    ]);
+  // When device changes via reset, refresh opener
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(LS_DEVICE_IDX, String(deviceIdx));
+
+    // Replace thread with a new opener for the new device (simple demo behavior)
+    const opener = `Hi ${DEMO_PATIENT_NAME} — we noticed we have not received a recent transmission from your ${deviceType}. This is usually a quick fix (Bluetooth/app connectivity), and we’d like to get you back online today.\n\nBefore we discuss your account, please reply with:\n1) Your full name\n2) Your date of birth (MM/DD/YYYY)`;
+
+    setMessages([{ role: "assistant", content: opener }]);
     setInput("");
-  }
+  }, [deviceIdx, deviceType]);
 
-  async function onSend() {
-    const text = input.trim();
-    if (!text || loading) return;
-
-    const nextMsgs: ChatMsg[] = [...messages, { role: "user", content: text }];
-    setMessages(nextMsgs);
-    setInput("");
+  async function sendToApi(updatedMessages: ChatMsg[]) {
     setLoading(true);
-
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mode: "device_agent",
-          patientName,
-          messages: nextMsgs.map((m) => ({ role: m.role, content: m.content })),
+          patientName: DEMO_PATIENT_NAME,
+          deviceType,
+          messages: updatedMessages.map((m) => ({
+            role: m.role === "assistant" ? "assistant" : "user",
+            content: m.content,
+          })),
         }),
       });
 
-      const data = (await res.json()) as { reply?: string; error?: string };
+      const data = (await res.json()) as { reply?: string };
       const reply = (data.reply ?? "").trim();
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: reply || "Thanks — I’m not seeing a reply right now. Please try again.",
-        },
-      ]);
-    } catch (e) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "Sorry — something went wrong on my side. Please try again.",
-        },
-      ]);
+      if (reply) {
+        setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+      }
     } finally {
       setLoading(false);
     }
+  }
+
+  async function onSend(e?: React.FormEvent) {
+    e?.preventDefault();
+    const text = input.trim();
+    if (!text || loading) return;
+
+    const next = [...messages, { role: "user", content: text }];
+    setMessages(next);
+    setInput("");
+
+    await sendToApi(next);
+  }
+
+  function onResetNextDevice() {
+    const idx = nextDeviceIndex(deviceIdx);
+    setDeviceIdx(idx);
   }
 
   return (
     <div className="mx-auto max-w-3xl">
       <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
-          <span className="font-medium text-foreground">Device Help</span> — {patientName}{" "}
-          <span className="text-muted-foreground">({scenario.label})</span>
+          <span className="font-medium text-foreground">
+            Device Help — {DEMO_PATIENT_NAME}
+          </span>{" "}
+          ({deviceType})
         </div>
 
         <button
           type="button"
-          onClick={advanceScenario}
-          className="text-sm underline text-muted-foreground"
+          onClick={onResetNextDevice}
+          className="text-sm underline"
         >
           Reset (next device)
         </button>
       </div>
 
-      <div className="mt-4 space-y-3">
-        {messages.map((m, i) => (
-          <div
-            key={i}
-            className={`rounded-lg px-3 py-2 text-sm whitespace-pre-wrap ${
-              m.role === "user" ? "bg-black text-white ml-10" : "bg-muted mr-10"
-            }`}
-          >
-            {m.content}
-          </div>
-        ))}
-      </div>
+      {/* Chat container with pinned input */}
+      <div className="mt-4 flex h-[70vh] flex-col rounded-lg border">
+        {/* Scrollable transcript */}
+        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
+          <div className="space-y-4">
+            {messages.map((m, i) => (
+              <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
+                <div
+                  className={
+                    m.role === "user"
+                      ? "max-w-[85%] whitespace-pre-wrap rounded-xl bg-black px-4 py-3 text-white"
+                      : "max-w-[85%] whitespace-pre-wrap rounded-xl bg-gray-50 px-4 py-3 text-gray-900"
+                  }
+                >
+                  {m.content}
+                </div>
+              </div>
+            ))}
 
-      <div className="mt-4 flex gap-2">
-        <input
-          className="flex-1 rounded-md border px-3 py-2 text-sm"
-          placeholder="Type your response..."
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") onSend();
-          }}
-          disabled={loading}
-        />
-        <button
-          type="button"
-          className="rounded-md border px-3 py-2 text-sm"
-          onClick={onSend}
-          disabled={loading}
-        >
-          {loading ? "Sending..." : "Send"}
-        </button>
+            {loading ? (
+              <div className="text-sm text-muted-foreground">Typing…</div>
+            ) : null}
+          </div>
+        </div>
+
+        {/* Pinned input */}
+        <form onSubmit={onSend} className="border-t p-3">
+          <div className="flex gap-2">
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Type your response…"
+              className="flex-1 rounded-md border px-3 py-2 text-sm"
+              disabled={loading}
+            />
+            <button
+              type="submit"
+              className="rounded-md border px-4 py-2 text-sm"
+              disabled={loading || !input.trim()}
+            >
+              Send
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
