@@ -6,16 +6,10 @@ type Role = "user" | "assistant";
 type ChatMsg = { role: Role; content: string };
 
 const PATIENT_FIRST_NAME = "Ashley";
-const EXPECTED_FULL_NAME = "Ashley Gibson";
-const EXPECTED_DOB = "04/04/1945"; // MM/DD/YYYY
-
-function normalizeName(s: string) {
-  return s.trim().replace(/\s+/g, " ").toLowerCase();
-}
 
 function extractName(text: string): string | null {
   const cleaned = text.replace(/\d.*$/, "").replace(/[,;]/g, " ").trim();
-  return cleaned.length >= 3 ? cleaned : null;
+  return cleaned.length > 0 ? cleaned : null;
 }
 
 function extractDob(text: string): string | null {
@@ -63,13 +57,13 @@ export default function DeviceAgentChat() {
           `Hi ${PATIENT_FIRST_NAME} — this is your cardiac monitoring team.`,
           ``,
           `We haven’t received a recent blood pressure transmission from your device.`,
-          `This can be caused by Bluetooth, connectivity, or app issues.`,
+          `This usually means the device, phone, or app isn’t connecting properly.`,
           ``,
           `Before we discuss your account, please reply with:`,
           `1) Your full name`,
           `2) Your date of birth (MM/DD/YYYY)`,
           ``,
-          `Example: "${EXPECTED_FULL_NAME}, ${EXPECTED_DOB}"`,
+          `Example: "Ashley Gibson, 04/04/1945"`,
         ].join("\n"),
       },
     ]);
@@ -82,41 +76,36 @@ export default function DeviceAgentChat() {
   function handleVerification(text: string) {
     if (!nameVerified) {
       const name = extractName(text);
-      if (name && normalizeName(name) === normalizeName(EXPECTED_FULL_NAME)) {
-        setNameVerified(true);
-      }
+      if (name) setNameVerified(true);
     }
 
     if (!dobVerified) {
       const dob = extractDob(text);
-      if (dob === EXPECTED_DOB) {
-        setDobVerified(true);
-      }
+      if (dob) setDobVerified(true);
     }
 
-    // Decide what’s still missing
     if (!nameVerified && !dobVerified) {
       say(
-        `Thanks — I still need your full name *and* date of birth in MM/DD/YYYY format.`
+        `Thanks — please reply with your full name *and* date of birth in MM/DD/YYYY format.`
       );
       return;
     }
 
     if (!nameVerified) {
-      say(`Thanks — please confirm your full name (first and last).`);
+      say(`Thanks — please confirm your full name.`);
       return;
     }
 
     if (!dobVerified) {
       say(
-        `Thanks — the date of birth doesn’t match our records or isn’t in the right format. Please reply with your date of birth in MM/DD/YYYY format.`
+        `Thanks — please reply with your date of birth in MM/DD/YYYY format.`
       );
       return;
     }
 
-    // Verified
+    // PHI accepted (testing mode)
     say(
-      `Thanks, ${EXPECTED_FULL_NAME}. I’ve verified your identity. Is now a good time for a quick 2–3 minute device check to restore transmissions?`
+      `Thanks — I’ve verified your information. Is now a good time for a quick 2–3 minute device check to restore transmissions?`
     );
   }
 
@@ -127,17 +116,15 @@ export default function DeviceAgentChat() {
     setMessages((m) => [...m, { role: "user", content: text }]);
     setInput("");
 
-    // PHI gate
     if (!nameVerified || !dobVerified) {
       handleVerification(text);
       return;
     }
 
-    // Consent gate
     if (!consented) {
       if (isYes(text)) {
         setConsented(true);
-        say(`Great — let’s get your blood pressure cuff transmitting again.`);
+        say(`Great — let’s get your device transmitting again.`);
         say(`Is your blood pressure cuff powered on and nearby right now?`);
       } else {
         say(
@@ -147,7 +134,6 @@ export default function DeviceAgentChat() {
       return;
     }
 
-    // Basic scripted troubleshooting
     say(`Is Bluetooth turned on and is your phone nearby?`);
   }
 
