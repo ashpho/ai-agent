@@ -7,6 +7,13 @@ type ChatMsg = { role: Role; content: string };
 
 const PATIENT_FIRST_NAME = "Ashley";
 
+const DEVICE_TYPES = [
+  "Blood pressure cuff",
+  "ECG patch / wearable monitor",
+  "Scale",
+  "Pulse oximeter",
+] as const;
+
 function extractName(text: string): string | null {
   const cleaned = text.replace(/\d.*$/, "").replace(/[,;]/g, " ").trim();
   return cleaned.length > 0 ? cleaned : null;
@@ -27,90 +34,85 @@ function extractDob(text: string): string | null {
 }
 
 function isYes(text: string) {
-  return text.trim().toLowerCase().startsWith("y");
+  const t = text.trim().toLowerCase();
+  return t === "y" || t === "yes" || t.startsWith("yes ");
+}
+
+function initialAssistantMessage(deviceType: string) {
+  return [
+    `Hi — we noticed we have not received a recent transmission from your ${deviceType}.`,
+    `This can happen for simple reasons (Bluetooth/app connectivity), and we can fix it quickly.`,
+    ``,
+    `Before we discuss your account, please reply with your full name and date of birth (MM/DD/YYYY).`,
+  ].join("\n");
 }
 
 export default function DeviceAgentChat() {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading] = useState(false);
 
   const [nameVerified, setNameVerified] = useState(false);
   const [dobVerified, setDobVerified] = useState(false);
   const [consented, setConsented] = useState(false);
 
-  const didInit = useRef(false);
+  const [deviceIdx, setDeviceIdx] = useState(0);
+  const deviceType = DEVICE_TYPES[deviceIdx];
+
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Re-init whenever device changes (including reset cycling)
   useEffect(() => {
-    if (didInit.current) return;
-    didInit.current = true;
-
-    setMessages([
-      {
-        role: "assistant",
-        content: [
-          `Hi ${PATIENT_FIRST_NAME} — this is your cardiac monitoring team.`,
-          ``,
-          `We haven’t received a recent blood pressure transmission from your device.`,
-          `This usually means the device, phone, or app isn’t connecting properly.`,
-          ``,
-          `Before we discuss your account, please reply with:`,
-          `1) Your full name`,
-          `2) Your date of birth (MM/DD/YYYY)`,
-          ``,
-          `Example: "Ashley Gibson, 04/04/1945"`,
-        ].join("\n"),
-      },
-    ]);
-  }, []);
+    setMessages([{ role: "assistant", content: initialAssistantMessage(deviceType) }]);
+    setInput("");
+    setNameVerified(false);
+    setDobVerified(false);
+    setConsented(false);
+  }, [deviceType]);
 
   function say(text: string) {
     setMessages((m) => [...m, { role: "assistant", content: text }]);
   }
 
+  function resetToNextDevice() {
+    setDeviceIdx((i) => (i + 1) % DEVICE_TYPES.length);
+  }
+
   function handleVerification(text: string) {
-    if (!nameVerified) {
-      const name = extractName(text);
-      if (name) setNameVerified(true);
-    }
+    // FIX: compute next values synchronously (avoid state race)
+    const foundName = !nameVerified ? extractName(text) : null;
+    const foundDob = !dobVerified ? extractDob(text) : null;
 
-    if (!dobVerified) {
-      const dob = extractDob(text);
-      if (dob) setDobVerified(true);
-    }
+    const nextNameVerified = nameVerified || Boolean(foundName);
+    const nextDobVerified = dobVerified || Boolean(foundDob);
 
-    if (!nameVerified && !dobVerified) {
-      say(
-        `Thanks — please reply with your full name *and* date of birth in MM/DD/YYYY format.`
-      );
+    if (foundName) setNameVerified(true);
+    if (foundDob) setDobVerified(true);
+
+    if (!nextNameVerified && !nextDobVerified) {
+      say(`Thanks — please reply with your full name and date of birth (MM/DD/YYYY).`);
       return;
     }
-
-    if (!nameVerified) {
+    if (!nextNameVerified) {
       say(`Thanks — please confirm your full name.`);
       return;
     }
-
-    if (!dobVerified) {
-      say(
-        `Thanks — please reply with your date of birth in MM/DD/YYYY format.`
-      );
+    if (!nextDobVerified) {
+      say(`Thanks — please reply with your date of birth in MM/DD/YYYY format.`);
       return;
     }
 
-    // PHI accepted (testing mode)
     say(
-      `Thanks — I’ve verified your information. Is now a good time for a quick 2–3 minute device check to restore transmissions?`
+      `Thanks ${PATIENT_FIRST_NAME} — I’ve verified your information. Is now a good time for a quick 2–3 minute device check to restore transmissions? (Reply “yes” or “no”)`
     );
   }
 
-  async function onSend() {
-    const text = input.trim();
+  async function onSend(forcedText?: string) {
+    const text = (forcedText ?? input).trim();
     if (!text || loading) return;
 
     setMessages((m) => [...m, { role: "user", content: text }]);
@@ -124,30 +126,37 @@ export default function DeviceAgentChat() {
     if (!consented) {
       if (isYes(text)) {
         setConsented(true);
-        say(`Great — let’s get your device transmitting again.`);
-        say(`Is your blood pressure cuff powered on and nearby right now?`);
+        say(`Great — let’s get your ${deviceType} transmitting again.`);
+        say(`Is the device powered on and nearby right now?`);
       } else {
-        say(
-          `No problem. Reply “yes” when you’re ready, or contact the clinic if this is urgent.`
-        );
+        say(`No problem. Reply “yes” when you’re ready.`);
       }
       return;
     }
 
-    say(`Is Bluetooth turned on and is your phone nearby?`);
+    say(`Is your phone nearby and is Bluetooth turned on?`);
   }
 
   return (
     <div className="mx-auto max-w-3xl">
       <div className="mt-4 flex h-[70vh] flex-col rounded-md border">
+        <div className="flex items-center justify-between border-b px-4 py-2">
+          <div className="text-sm text-muted-foreground">Device Help: {deviceType}</div>
+          <button
+            type="button"
+            onClick={resetToNextDevice}
+            className="text-sm underline text-muted-foreground hover:text-foreground"
+          >
+            Reset (next device)
+          </button>
+        </div>
+
         <div className="flex-1 overflow-auto p-4">
           {messages.map((m, i) => (
             <div
               key={i}
-              className={`mb-3 max-w-[85%] rounded-md px-3 py-2 text-sm whitespace-pre-wrap ${
-                m.role === "user"
-                  ? "ml-auto bg-black text-white"
-                  : "mr-auto bg-muted"
+              className={`mb-3 max-w-[85%] whitespace-pre-wrap rounded-md px-3 py-2 text-sm ${
+                m.role === "user" ? "ml-auto bg-black text-white" : "mr-auto bg-muted"
               }`}
             >
               {m.content}
@@ -165,10 +174,7 @@ export default function DeviceAgentChat() {
               placeholder="Type your response…"
               className="w-full rounded-md border px-3 py-2 text-sm"
             />
-            <button
-              onClick={onSend}
-              className="rounded-md border px-4 py-2 text-sm"
-            >
+            <button onClick={() => onSend()} className="rounded-md border px-4 py-2 text-sm">
               Send
             </button>
           </div>
