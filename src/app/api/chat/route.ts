@@ -6,7 +6,7 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-type Mode = "hf_symptom_check" | "med_check";
+type Mode = "hf_symptom_check" | "med_check" | "device_agent";
 
 function readPromptFile(mode: Mode, filename: string) {
   const filePath = path.join(process.cwd(), "prompts", mode, filename);
@@ -27,21 +27,33 @@ export async function POST(req: Request) {
       patientName?: string;
     };
 
-    const resolvedMode: Mode =
-      mode === "med_check" ? "med_check" : "hf_symptom_check";
+    // ✅ Explicit allow-list for safety
+    const allowedModes: Mode[] = [
+      "hf_symptom_check",
+      "med_check",
+      "device_agent",
+    ];
+
+    const resolvedMode: Mode = allowedModes.includes(mode as Mode)
+      ? (mode as Mode)
+      : "hf_symptom_check";
 
     const system = readPromptFile(resolvedMode, "system.md");
     const intake = readPromptFile(resolvedMode, "intake.md");
 
-    const nameLine = patientName?.trim()
-      ? `\n\nPATIENT NAME: ${patientName.trim()}`
-      : "";
+    const nameLine =
+      patientName && patientName.trim()
+        ? `\n\nPATIENT NAME: ${patientName.trim()}`
+        : "";
 
     const promptHeader = `${system}${nameLine}\n\n${intake}`.trim();
 
     const response = await client.chat.completions.create({
       model: "gpt-4.1-mini",
-      messages: [{ role: "system", content: promptHeader }, ...(messages ?? [])],
+      messages: [
+        { role: "system", content: promptHeader },
+        ...(messages ?? []),
+      ],
       temperature: 0.2,
     });
 
@@ -49,13 +61,19 @@ export async function POST(req: Request) {
       JSON.stringify({
         reply: response.choices?.[0]?.message?.content ?? "",
       }),
-      { status: 200, headers: { "Content-Type": "application/json" } }
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }
     );
   } catch (error) {
     console.error(error);
     return new Response(
       JSON.stringify({ error: "Something went wrong" }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }
     );
   }
 }
