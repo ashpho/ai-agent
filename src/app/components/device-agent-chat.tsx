@@ -5,90 +5,119 @@ import { useEffect, useRef, useState } from "react";
 type Role = "user" | "assistant";
 type ChatMsg = { role: Role; content: string };
 
-/**
- * Proactive outreach POC
- * - We DO NOT ask for the patient's name.
- * - We assume the platform already knows the patient identity.
- * - For the demo, we hardcode a patient name.
- */
 const DEMO_PATIENT_NAME = "Ashley";
 
+// Persisted scenario index so refreshes keep cycling
+const SCENARIO_IDX_KEY = "rs_poc_device_scenario_idx_v1";
+
+type DeviceScenario = {
+  id: string;
+  label: string;
+  postVerifyNudge: string; // what we want to do AFTER verification (kept generic)
+};
+
+const SCENARIOS: DeviceScenario[] = [
+  {
+    id: "bp_missing_48h",
+    label: "Blood pressure cuff",
+    postVerifyNudge:
+      "Thanks — once I confirm, I’ll help you do a quick blood pressure cuff check and make sure readings are syncing.",
+  },
+  {
+    id: "scale_missing_72h",
+    label: "Bluetooth weight scale",
+    postVerifyNudge:
+      "Thanks — once I confirm, I’ll help you do a quick scale connection check and make sure readings are syncing.",
+  },
+  {
+    id: "pulseox_no_data",
+    label: "Pulse oximeter",
+    postVerifyNudge:
+      "Thanks — once I confirm, I’ll help you do a quick pulse oximeter check and make sure readings are syncing.",
+  },
+  {
+    id: "ecg_patch_gap",
+    label: "ECG patch / wearable monitor",
+    postVerifyNudge:
+      "Thanks — once I confirm, I’ll help you do a quick wearable check to make sure it’s positioned and transmitting.",
+  },
+  {
+    id: "bp_outlier_reading",
+    label: "Blood pressure cuff (follow-up)",
+    postVerifyNudge:
+      "Thanks — once I confirm, I’ll help you do a quick cuff check and then we’ll make sure your next reading goes through.",
+  },
+];
+
+function clampIdx(n: number, len: number) {
+  if (!len) return 0;
+  return ((n % len) + len) % len;
+}
+
+function initialVerificationMessage(patientName: string) {
+  return [
+    `Hi ${patientName} — this is a quick outreach from your cardiac monitoring team.`,
+    `Before we discuss your account, please reply with:`,
+    `1) Your full name`,
+    `2) Your date of birth (MM/DD/YYYY)`,
+  ].join("\n");
+}
+
 export default function DeviceAgentChat() {
-  const [patientName, setPatientName] = useState<string>(DEMO_PATIENT_NAME);
-  const [input, setInput] = useState("");
+  const [patientName] = useState<string>(DEMO_PATIENT_NAME);
+  const [scenarioIdx, setScenarioIdx] = useState<number>(0);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [input, setInput] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(false);
 
-  // Prevent double kickoff in React StrictMode/dev
-  const didKickoffRef = useRef(false);
+  // prevent double kickoff in React StrictMode/dev
+  const didInitRef = useRef(false);
 
-  // On mount: immediately show a placeholder and kick off proactive outreach.
+  const scenario = SCENARIOS[clampIdx(scenarioIdx, SCENARIOS.length)];
+
   useEffect(() => {
-    const name = DEMO_PATIENT_NAME;
-    setPatientName(name);
+    if (didInitRef.current) return;
+    didInitRef.current = true;
+
+    const saved =
+      typeof window !== "undefined" ? localStorage.getItem(SCENARIO_IDX_KEY) : null;
+    const startIdx = saved
+      ? clampIdx(parseInt(saved, 10) || 0, SCENARIOS.length)
+      : 0;
+
+    setScenarioIdx(startIdx);
+
+    const intro = initialVerificationMessage(patientName);
+    const nudge = SCENARIOS[startIdx].postVerifyNudge;
+
+    // We show verification request + a generic “what happens next” note (still non-PHI)
+    setMessages([
+      { role: "assistant", content: intro },
+      { role: "assistant", content: nudge },
+    ]);
+  }, [patientName]);
+
+  function advanceScenario() {
+    const next = clampIdx(scenarioIdx + 1, SCENARIOS.length);
+    setScenarioIdx(next);
+    if (typeof window !== "undefined") localStorage.setItem(SCENARIO_IDX_KEY, String(next));
+
+    const intro = initialVerificationMessage(patientName);
+    const nudge = SCENARIOS[next].postVerifyNudge;
 
     setMessages([
-      {
-        role: "assistant",
-        content: `Hi ${name} — one moment while I check on your monitoring device...`,
-      },
+      { role: "assistant", content: intro },
+      { role: "assistant", content: nudge },
     ]);
-  }, []);
-
-  // Kick off proactive outreach once (after mount).
-  useEffect(() => {
-    if (!patientName) return;
-    if (didKickoffRef.current) return;
-    if (messages.length === 0) return; // wait until placeholder is set
-
-    didKickoffRef.current = true;
-    void kickoffProactiveOutreach(patientName);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patientName, messages.length]);
-
-  async function kickoffProactiveOutreach(name: string) {
-    setLoading(true);
-
-    try {
-      // Hidden kickoff message to force the model to produce the proactive opening.
-      const kickoffUserMessage =
-        "Kick off the proactive device outreach now. Do not ask for the patient's name.";
-
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: "device_agent",
-          patientName: name,
-          messages: [{ role: "user", content: kickoffUserMessage }],
-        }),
-      });
-
-      const data = await res.json();
-      const assistantText =
-        (data?.reply as string) ?? "Sorry—something went wrong.";
-
-      // Replace placeholder with the actual proactive outreach message
-      setMessages([{ role: "assistant", content: assistantText }]);
-    } catch {
-      setMessages([
-        {
-          role: "assistant",
-          content:
-            "Sorry—something went wrong starting the device check-in. Please try again.",
-        },
-      ]);
-    } finally {
-      setLoading(false);
-    }
+    setInput("");
   }
 
   async function onSend() {
     const text = input.trim();
     if (!text || loading) return;
 
-    const nextMessages: ChatMsg[] = [...messages, { role: "user", content: text }];
-    setMessages(nextMessages);
+    const nextMsgs: ChatMsg[] = [...messages, { role: "user", content: text }];
+    setMessages(nextMsgs);
     setInput("");
     setLoading(true);
 
@@ -99,59 +128,56 @@ export default function DeviceAgentChat() {
         body: JSON.stringify({
           mode: "device_agent",
           patientName,
-          messages: nextMessages,
+          messages: nextMsgs.map((m) => ({ role: m.role, content: m.content })),
         }),
       });
 
-      const data = await res.json();
-      const assistantText =
-        (data?.reply as string) ?? "Sorry—something went wrong.";
-      setMessages([...nextMessages, { role: "assistant", content: assistantText }]);
-    } catch {
-      setMessages([
-        ...nextMessages,
-        { role: "assistant", content: "Sorry—something went wrong." },
+      const data = (await res.json()) as { reply?: string; error?: string };
+      const reply = (data.reply ?? "").trim();
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: reply || "Thanks — I’m not seeing a reply right now. Please try again.",
+        },
+      ]);
+    } catch (e) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "Sorry — something went wrong on my side. Please try again.",
+        },
       ]);
     } finally {
       setLoading(false);
     }
   }
 
-  function reset() {
-    didKickoffRef.current = false;
-    setInput("");
-    setLoading(false);
-
-    const name = DEMO_PATIENT_NAME;
-    setPatientName(name);
-
-    setMessages([
-      {
-        role: "assistant",
-        content: `Hi ${name} — one moment while I check on your monitoring device...`,
-      },
-    ]);
-  }
-
   return (
-    <div className="w-full max-w-3xl">
-      <div className="flex items-center justify-between pb-3">
+    <div className="mx-auto max-w-3xl">
+      <div className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
-          Device Help — {patientName}
+          <span className="font-medium text-foreground">Device Help</span> — {patientName}{" "}
+          <span className="text-muted-foreground">({scenario.label})</span>
         </div>
-        <button className="text-sm underline" onClick={reset}>
-          Reset
+
+        <button
+          type="button"
+          onClick={advanceScenario}
+          className="text-sm underline text-muted-foreground"
+        >
+          Reset (next device)
         </button>
       </div>
 
-      <div className="space-y-3">
+      <div className="mt-4 space-y-3">
         {messages.map((m, i) => (
           <div
             key={i}
             className={`rounded-lg px-3 py-2 text-sm whitespace-pre-wrap ${
-              m.role === "user"
-                ? "bg-black text-white ml-10"
-                : "bg-muted mr-10"
+              m.role === "user" ? "bg-black text-white ml-10" : "bg-muted mr-10"
             }`}
           >
             {m.content}
@@ -176,7 +202,7 @@ export default function DeviceAgentChat() {
           onClick={onSend}
           disabled={loading}
         >
-          {loading ? "Sending…" : "Send"}
+          {loading ? "Sending..." : "Send"}
         </button>
       </div>
     </div>
