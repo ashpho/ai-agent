@@ -47,6 +47,8 @@ function initialAssistantMessage(deviceType: string) {
   ].join("\n");
 }
 
+type Step = "power" | "bluetooth" | "done";
+
 export default function DeviceAgentChat() {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
@@ -58,6 +60,8 @@ export default function DeviceAgentChat() {
 
   const [deviceIdx, setDeviceIdx] = useState(0);
   const deviceType = DEVICE_TYPES[deviceIdx];
+
+  const [step, setStep] = useState<Step>("power");
 
   const endRef = useRef<HTMLDivElement | null>(null);
 
@@ -72,6 +76,7 @@ export default function DeviceAgentChat() {
     setNameVerified(false);
     setDobVerified(false);
     setConsented(false);
+    setStep("power");
   }, [deviceType]);
 
   function say(text: string) {
@@ -111,21 +116,24 @@ export default function DeviceAgentChat() {
     );
   }
 
-  async function onSend(forcedText?: string) {
-    const text = (forcedText ?? input).trim();
+  async function onSend() {
+    const text = input.trim();
     if (!text || loading) return;
 
     setMessages((m) => [...m, { role: "user", content: text }]);
     setInput("");
 
+    // PHI gate
     if (!nameVerified || !dobVerified) {
       handleVerification(text);
       return;
     }
 
+    // Consent gate
     if (!consented) {
       if (isYes(text)) {
         setConsented(true);
+        setStep("power");
         say(`Great — let’s get your ${deviceType} transmitting again.`);
         say(`Is the device powered on and nearby right now?`);
       } else {
@@ -134,7 +142,29 @@ export default function DeviceAgentChat() {
       return;
     }
 
-    say(`Is your phone nearby and is Bluetooth turned on?`);
+    // Step flow (prevents repeated Bluetooth question)
+    if (step === "power") {
+      if (isYes(text)) {
+        setStep("bluetooth");
+        say(`Is your phone nearby and is Bluetooth turned on?`);
+      } else {
+        say(`Please power on the device and reply “yes” when it’s ready.`);
+      }
+      return;
+    }
+
+    if (step === "bluetooth") {
+      if (isYes(text)) {
+        setStep("done");
+        say(`Thanks — please open the app and wait 30–60 seconds for it to sync.`);
+      } else {
+        say(`Please turn on Bluetooth and keep your phone nearby, then reply “yes”.`);
+      }
+      return;
+    }
+
+    // done
+    say(`Did it sync? Reply “yes” if you see it connected/synced in the app, or “no” if not.`);
   }
 
   return (
@@ -174,7 +204,7 @@ export default function DeviceAgentChat() {
               placeholder="Type your response…"
               className="w-full rounded-md border px-3 py-2 text-sm"
             />
-            <button onClick={() => onSend()} className="rounded-md border px-4 py-2 text-sm">
+            <button onClick={onSend} className="rounded-md border px-4 py-2 text-sm">
               Send
             </button>
           </div>
