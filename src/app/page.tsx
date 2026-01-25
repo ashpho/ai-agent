@@ -3,9 +3,12 @@
 import * as React from "react";
 import { SymptomCheckerChat } from "./components/symptom-checker-chat";
 import MedCheckChat from "./components/med-check-chat";
+import DeviceAgentChat from "./components/device-agent-chat";
+
+type Mode = "symptoms" | "meds" | "device";
 
 export default function Home() {
-  const [mode, setMode] = React.useState<"symptoms" | "meds">("symptoms");
+  const [mode, setMode] = React.useState<Mode>("symptoms");
 
   return (
     <main className="p-4">
@@ -35,13 +38,24 @@ export default function Home() {
           >
             GDMT Med Check
           </button>
+
+          <button
+            type="button"
+            onClick={() => setMode("device")}
+            className={`rounded-md px-3 py-2 text-sm border ${
+              mode === "device" ? "bg-black text-white" : "bg-white"
+            }`}
+          >
+            Device Help
+          </button>
         </div>
 
         <div className="mt-6">
-          {mode === "symptoms" ? <SymptomCheckerChat /> : <MedCheckChat />}
+          {mode === "symptoms" && <SymptomCheckerChat />}
+          {mode === "meds" && <MedCheckChat />}
+          {mode === "device" && <DeviceAgentChat />}
         </div>
       </div>
     </main>
   );
 }
-
