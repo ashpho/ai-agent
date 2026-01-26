@@ -1,11 +1,12 @@
+// src/app/components/device-agent-chat.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-type Role = "user" | "assistant" | "system";
+type Role = "system" | "user" | "assistant";
 type ChatMsg = { role: Role; content: string };
 
-const PATIENT_NAME = "Ashley";
+const PATIENT_FIRST_NAME = "Ashley";
 
 const DEVICE_TYPES = [
   "Blood pressure cuff",
@@ -14,66 +15,63 @@ const DEVICE_TYPES = [
   "Pulse oximeter",
 ] as const;
 
-async function callChatApi(messages: ChatMsg[]) {
-  const res = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      mode: "device_agent",        // ✅ ALWAYS
-      patientName: PATIENT_NAME,
-      messages: messages ?? [],    // ✅ ALWAYS (never undefined)
-    }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || "API error");
-  }
-
-  const data = await res.json();
-  return (data.reply ?? "").trim();
-}
-
 export default function DeviceAgentChat() {
-  const [deviceIdx, setDeviceIdx] = useState(0);
-  const deviceType = DEVICE_TYPES[deviceIdx];
-
+  // IMPORTANT: explicitly type state so role doesn't widen to `string`
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // device cycling lives here
+  const [deviceIdx, setDeviceIdx] = useState(0);
+  const deviceType = DEVICE_TYPES[deviceIdx];
+
   const endRef = useRef<HTMLDivElement | null>(null);
 
-  const deviceSystemMsg = useMemo<ChatMsg>(
-    () => ({
-      role: "system",
-      content: `Device type for this session: ${deviceType}`,
-    }),
-    [deviceType]
+  const uiMessages = useMemo(
+    () => messages.filter((m) => m.role !== "system"),
+    [messages]
   );
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [uiMessages.length]);
 
-  useEffect(() => {
-    // Reset + re-init on device change
-    setMessages([]);
-    setInput("");
-    start();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deviceType]);
+  async function callAgent(next: ChatMsg[]) {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "device_agent", // ALWAYS device_agent so prompts/device_agent/* is used
+        patientName: PATIENT_FIRST_NAME,
+        // include device type as a system message so the prompt can branch
+        messages: [
+          { role: "system", content: `Device type for this session: ${deviceType}` },
+          ...next.filter((m) => m.role !== "system"),
+        ],
+      }),
+    });
 
-  async function start() {
+    if (!res.ok) {
+      throw new Error(`API error: ${res.status}`);
+    }
+    const data = (await res.json()) as { reply?: string; error?: string };
+
+    const reply = (data.reply ?? "").trim();
+    if (!reply) {
+      throw new Error(data.error || "Empty reply from model");
+    }
+
+    setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+  }
+
+  async function startFlow() {
     setLoading(true);
     try {
-      const reply = await callChatApi([
-        deviceSystemMsg,
-        { role: "user", content: "Start device help flow." },
-      ]);
-
-      setMessages([{ role: "assistant", content: reply }]);
-    } catch {
+      // Clear UI + kick off the FIRST assistant message from prompts (intake/system)
+      setMessages([]);
+      await callAgent([]);
+    } catch (e) {
+      console.error(e);
       setMessages([
         {
           role: "assistant",
@@ -86,23 +84,33 @@ export default function DeviceAgentChat() {
     }
   }
 
-  async function send() {
-    if (!input.trim() || loading) return;
+  // Start (or restart) whenever device changes
+  useEffect(() => {
+    void startFlow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deviceIdx]);
 
-    const next = [...messages, { role: "user", content: input }];
+  async function onSend() {
+    const trimmed = input.trim();
+    if (!trimmed || loading) return;
+
+    // type next explicitly so role stays Role union (not string)
+    const next: ChatMsg[] = [...messages, { role: "user", content: trimmed }];
+
     setMessages(next);
     setInput("");
     setLoading(true);
 
     try {
-      const reply = await callChatApi([deviceSystemMsg, ...next]);
-      setMessages([...next, { role: "assistant", content: reply }]);
-    } catch {
-      setMessages([
-        ...next,
+      await callAgent(next);
+    } catch (e) {
+      console.error(e);
+      setMessages((prev) => [
+        ...prev,
         {
           role: "assistant",
-          content: "Sorry — something went wrong. Please try again.",
+          content:
+            "Sorry — I hit an error processing that. Please try again (or click Reset to restart).",
         },
       ]);
     } finally {
@@ -110,52 +118,66 @@ export default function DeviceAgentChat() {
     }
   }
 
+  function onResetNextDevice(e: React.MouseEvent) {
+    e.preventDefault();
+    setDeviceIdx((i) => (i + 1) % DEVICE_TYPES.length);
+  }
+
   return (
     <div className="border rounded-md">
-      <div className="border-b px-4 py-2 flex justify-between text-sm">
-        <div>
-          <strong>Device Help:</strong> {deviceType}
+      <div className="flex items-center justify-between border-b p-3">
+        <div className="text-sm">
+          <span className="font-medium">Device Help:</span> {deviceType}
         </div>
-        <button
-          className="underline"
-          onClick={() => setDeviceIdx((i) => (i + 1) % DEVICE_TYPES.length)}
+
+        {/* Keep reset link */}
+        <a
+          href="#"
+          onClick={onResetNextDevice}
+          className="text-sm underline"
+          aria-label="Reset to next device"
         >
           Reset (next device)
-        </button>
+        </a>
       </div>
 
       <div className="p-4 space-y-3 min-h-[520px]">
-        {messages.map((m, i) => (
-          <div
-            key={i}
-            className={`rounded-md px-3 py-2 text-sm max-w-[85%] ${
-              m.role === "user"
-                ? "bg-black text-white ml-auto"
-                : "bg-muted"
-            }`}
-          >
-            {m.content}
+        {uiMessages.map((m, idx) => (
+          <div key={idx} className="space-y-1">
+            <div className="text-xs text-muted-foreground">
+              {m.role === "user" ? PATIENT_FIRST_NAME.toLowerCase() : "Assistant"}
+            </div>
+            <div
+              className={`whitespace-pre-wrap rounded-md px-3 py-2 text-sm ${
+                m.role === "user" ? "bg-black text-white" : "mr-auto bg-muted"
+              }`}
+            >
+              {m.content}
+            </div>
           </div>
         ))}
+
         <div ref={endRef} />
       </div>
 
-      <div className="border-t p-3 flex gap-2">
-        <input
-          className="w-full border rounded-md px-3 py-2 text-sm"
-          placeholder="Type your response…"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && send()}
-          disabled={loading}
-        />
-        <button
-          className="border rounded-md px-4 py-2 text-sm"
-          onClick={send}
-          disabled={loading}
-        >
-          Send
-        </button>
+      <div className="border-t p-3">
+        <div className="flex gap-2">
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void onSend()}
+            placeholder={loading ? "Working…" : "Type your response…"}
+            className="w-full rounded-md border px-3 py-2 text-sm"
+            disabled={loading}
+          />
+          <button
+            onClick={() => void onSend()}
+            className="rounded-md border px-4 py-2 text-sm"
+            disabled={loading}
+          >
+            Send
+          </button>
+        </div>
       </div>
     </div>
   );
