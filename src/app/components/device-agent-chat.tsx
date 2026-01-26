@@ -14,6 +14,8 @@ const DEVICE_TYPES = [
   "Pulse oximeter",
 ] as const;
 
+type DeviceType = (typeof DEVICE_TYPES)[number];
+
 function extractName(text: string): string | null {
   const cleaned = text.replace(/\d.*$/, "").replace(/[,;]/g, " ").trim();
   return cleaned.length > 0 ? cleaned : null;
@@ -33,13 +35,17 @@ function extractDob(text: string): string | null {
   return `${String(mm).padStart(2, "0")}/${String(dd).padStart(2, "0")}/${yy}`;
 }
 
+function norm(text: string) {
+  return text.trim().toLowerCase();
+}
+
 function isYes(text: string) {
-  const t = text.trim().toLowerCase();
+  const t = norm(text);
   return t === "y" || t === "yes" || t.startsWith("yes ");
 }
 
 function isNo(text: string) {
-  const t = text.trim().toLowerCase();
+  const t = norm(text);
   return t === "n" || t === "no" || t.startsWith("no ");
 }
 
@@ -53,6 +59,82 @@ function initialAssistantMessage(deviceType: string) {
 }
 
 type Step = "power" | "bluetooth" | "sync_wait" | "sync_check" | "closed";
+
+/**
+ * Conversational “agentic” layer:
+ * If user gives free-text instead of yes/no, acknowledge + give a relevant tip + return to the checkpoint.
+ */
+function handleFreeTextAtStep(step: Step, deviceType: DeviceType, text: string): string[] {
+  const t = norm(text);
+
+  // Common “I’m stuck” signals
+  const mentionsError =
+    t.includes("error") || t.includes("failed") || t.includes("won't") || t.includes("wont") || t.includes("not working");
+  const mentionsBluetooth = t.includes("bluetooth") || t.includes("pair") || t.includes("connect");
+  const mentionsApp = t.includes("app") || t.includes("sync") || t.includes("signed") || t.includes("login");
+
+  if (step === "sync_check") {
+    if (deviceType === "Scale") {
+      // Your exact example: “weight seems too high”
+      if (t.includes("high") || t.includes("too much") || t.includes("wrong") || t.includes("off")) {
+        return [
+          `Thanks — that can happen if the scale is on carpet/soft flooring, or if it didn’t zero out first.`,
+          `Quick check: is the scale on a hard, flat floor and did it show 0.0 before you stepped on?`,
+          `After that — did it sync to the app? Reply “yes” or “no”.`,
+        ];
+      }
+      return [
+        `Got it. For the scale, the most common issues are flooring (needs hard floor), batteries, and pairing in the app.`,
+        `Did it sync to the app after you tried? Reply “yes” or “no”.`,
+      ];
+    }
+
+    if (deviceType === "Blood pressure cuff") {
+      return [
+        `Thanks — for the cuff, the common issues are Bluetooth pairing and getting a fresh reading with the phone nearby.`,
+        `Did it sync to the app after your last reading? Reply “yes” or “no”.`,
+      ];
+    }
+
+    if (deviceType === "ECG patch / wearable monitor") {
+      return [
+        `Thanks — for the wearable, the common issues are the phone not nearby, Bluetooth off, or the app not allowed to run in the background.`,
+        `Did it sync in the app after waiting 30–60 seconds? Reply “yes” or “no”.`,
+      ];
+    }
+
+    if (deviceType === "Pulse oximeter") {
+      return [
+        `Thanks — for the pulse oximeter, pairing and keeping the phone close are the most common issues.`,
+        `Did it sync in the app? Reply “yes” or “no”.`,
+      ];
+    }
+  }
+
+  if (step === "bluetooth") {
+    if (mentionsBluetooth || mentionsError || mentionsApp) {
+      return [
+        `Thanks — that helps.`,
+        `Quick reset usually works: toggle Bluetooth off/on, then open the app again.`,
+        `Now: is Bluetooth turned on and is your phone nearby? Reply “yes” or “no”.`,
+      ];
+    }
+    return [
+      `Got it. We’ll keep this quick.`,
+      `Is your phone nearby and is Bluetooth turned on? Reply “yes” or “no”.`,
+    ];
+  }
+
+  if (step === "power") {
+    return [
+      `Got it.`,
+      `Is the device powered on and nearby right now? Reply “yes” or “no”.`,
+    ];
+  }
+
+  // fallback
+  return [`Please reply “yes” or “no” so I can keep going.`];
+}
 
 export default function DeviceAgentChat() {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -85,6 +167,10 @@ export default function DeviceAgentChat() {
 
   function say(text: string) {
     setMessages((m) => [...m, { role: "assistant", content: text }]);
+  }
+
+  function sayMany(lines: string[]) {
+    lines.forEach((l) => say(l));
   }
 
   function resetToNextDevice() {
@@ -166,14 +252,19 @@ export default function DeviceAgentChat() {
       return;
     }
 
+    // Agentic handling: accept free-text and respond conversationally
+    const expectsYesNo = step === "power" || step === "bluetooth" || step === "sync_check";
+    if (expectsYesNo && !isYes(text) && !isNo(text)) {
+      sayMany(handleFreeTextAtStep(step, deviceType, text));
+      return;
+    }
+
     if (step === "power") {
       if (isYes(text)) {
         setStep("bluetooth");
         say(`Is your phone nearby and is Bluetooth turned on?`);
-      } else if (isNo(text)) {
-        say(`Please power on the device and reply “yes” when it’s ready.`);
       } else {
-        say(`Please reply “yes” or “no”.`);
+        say(`Please power on the device and reply “yes” when it’s ready.`);
       }
       return;
     }
@@ -184,10 +275,8 @@ export default function DeviceAgentChat() {
         say(`Thanks — please open the app and wait 30–60 seconds for it to sync.`);
         say(`Did it sync? Reply “yes” if you see it connected/synced in the app, or “no” if not.`);
         setStep("sync_check");
-      } else if (isNo(text)) {
-        say(`Please turn on Bluetooth and keep your phone nearby, then reply “yes”.`);
       } else {
-        say(`Please reply “yes” or “no”.`);
+        say(`Please turn on Bluetooth and keep your phone nearby, then reply “yes”.`);
       }
       return;
     }
@@ -195,10 +284,8 @@ export default function DeviceAgentChat() {
     if (step === "sync_check") {
       if (isYes(text)) {
         closeSuccess();
-      } else if (isNo(text)) {
-        closeEscalate();
       } else {
-        say(`Please reply “yes” or “no”.`);
+        closeEscalate();
       }
       return;
     }
