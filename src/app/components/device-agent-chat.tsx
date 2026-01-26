@@ -38,6 +38,11 @@ function isYes(text: string) {
   return t === "y" || t === "yes" || t.startsWith("yes ");
 }
 
+function isNo(text: string) {
+  const t = text.trim().toLowerCase();
+  return t === "n" || t === "no" || t.startsWith("no ");
+}
+
 function initialAssistantMessage(deviceType: string) {
   return [
     `Hi — we noticed we have not received a recent transmission from your ${deviceType}.`,
@@ -47,7 +52,7 @@ function initialAssistantMessage(deviceType: string) {
   ].join("\n");
 }
 
-type Step = "power" | "bluetooth" | "done";
+type Step = "power" | "bluetooth" | "sync_wait" | "sync_check" | "closed";
 
 export default function DeviceAgentChat() {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -69,7 +74,6 @@ export default function DeviceAgentChat() {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Re-init whenever device changes (including reset cycling)
   useEffect(() => {
     setMessages([{ role: "assistant", content: initialAssistantMessage(deviceType) }]);
     setInput("");
@@ -88,7 +92,6 @@ export default function DeviceAgentChat() {
   }
 
   function handleVerification(text: string) {
-    // FIX: compute next values synchronously (avoid state race)
     const foundName = !nameVerified ? extractName(text) : null;
     const foundDob = !dobVerified ? extractDob(text) : null;
 
@@ -116,6 +119,27 @@ export default function DeviceAgentChat() {
     );
   }
 
+  function closeSuccess() {
+    say(`Great — thanks. We’ll keep monitoring for new transmissions. If anything changes, we’ll reach out.`);
+    setStep("closed");
+  }
+
+  function closeEscalate() {
+    say(
+      [
+        `Thanks — it looks like it still isn’t syncing.`,
+        ``,
+        `To help device support follow up, please reply with:`,
+        `1) Any error message you see in the app (if any)`,
+        `2) What you already tried (Bluetooth/app/restart/pairing/reading)`,
+        `3) Best callback time`,
+        ``,
+        `Our care team/device support will follow up.`,
+      ].join("\n")
+    );
+    setStep("closed");
+  }
+
   async function onSend() {
     const text = input.trim();
     if (!text || loading) return;
@@ -123,48 +147,64 @@ export default function DeviceAgentChat() {
     setMessages((m) => [...m, { role: "user", content: text }]);
     setInput("");
 
-    // PHI gate
     if (!nameVerified || !dobVerified) {
       handleVerification(text);
       return;
     }
 
-    // Consent gate
     if (!consented) {
       if (isYes(text)) {
         setConsented(true);
         setStep("power");
         say(`Great — let’s get your ${deviceType} transmitting again.`);
         say(`Is the device powered on and nearby right now?`);
-      } else {
+      } else if (isNo(text)) {
         say(`No problem. Reply “yes” when you’re ready.`);
+      } else {
+        say(`Please reply “yes” or “no”.`);
       }
       return;
     }
 
-    // Step flow (prevents repeated Bluetooth question)
     if (step === "power") {
       if (isYes(text)) {
         setStep("bluetooth");
         say(`Is your phone nearby and is Bluetooth turned on?`);
-      } else {
+      } else if (isNo(text)) {
         say(`Please power on the device and reply “yes” when it’s ready.`);
+      } else {
+        say(`Please reply “yes” or “no”.`);
       }
       return;
     }
 
     if (step === "bluetooth") {
       if (isYes(text)) {
-        setStep("done");
+        setStep("sync_wait");
         say(`Thanks — please open the app and wait 30–60 seconds for it to sync.`);
-      } else {
+        say(`Did it sync? Reply “yes” if you see it connected/synced in the app, or “no” if not.`);
+        setStep("sync_check");
+      } else if (isNo(text)) {
         say(`Please turn on Bluetooth and keep your phone nearby, then reply “yes”.`);
+      } else {
+        say(`Please reply “yes” or “no”.`);
       }
       return;
     }
 
-    // done
-    say(`Did it sync? Reply “yes” if you see it connected/synced in the app, or “no” if not.`);
+    if (step === "sync_check") {
+      if (isYes(text)) {
+        closeSuccess();
+      } else if (isNo(text)) {
+        closeEscalate();
+      } else {
+        say(`Please reply “yes” or “no”.`);
+      }
+      return;
+    }
+
+    // closed
+    say(`Thanks — if you need anything else, reply here or contact the clinic.`);
   }
 
   return (
